@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
+
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -76,6 +77,80 @@ func TestUpdateUpsert(t *testing.T) {
 	err = collection.FindOne(ctx, bson.D{{"_id", id}}).Decode(&doc)
 	require.NoError(t, err)
 	AssertEqualDocuments(t, bson.D{{"_id", id}, {"foo", "qux"}}, doc)
+}
+
+func TestUpdateMulti(t *testing.T) {
+	t.Parallel()
+	ctx, collection := setup(t)
+
+	_, err := collection.InsertMany(ctx, []any{
+		bson.D{{"key", "foo"}},
+		bson.D{{"key", "foo"}},
+		bson.D{{"key", "baz"}},
+	})
+	require.NoError(t, err)
+
+	// update one document when multi: false
+	filter := bson.D{{"key", "foo"}}
+	update := bson.D{{"$set", bson.D{{"key", "baz"}}}}
+	res, err := collection.UpdateOne(ctx, filter, update, options.Update())
+	require.NoError(t, err)
+
+	res.UpsertedID = nil
+	expected := &mongo.UpdateResult{
+		MatchedCount:  1,
+		ModifiedCount: 1,
+		UpsertedCount: 0,
+	}
+	require.Equal(t, expected, res)
+
+	// check that only one document was updated
+	cursor, err := collection.Find(ctx, bson.D{{"key", "foo"}})
+	require.NoError(t, err)
+
+	var docs []bson.D
+	err = cursor.All(ctx, &docs)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+
+	// update all documents that match the filter when multi: true
+	filter = bson.D{{"key", "baz"}}
+	update = bson.D{{"$set", bson.D{{"key", "qux"}}}}
+	res, err = collection.UpdateMany(ctx, filter, update, options.Update())
+	require.NoError(t, err)
+
+	expected = &mongo.UpdateResult{
+		MatchedCount:  2,
+		ModifiedCount: 2,
+		UpsertedCount: 0,
+	}
+	require.Equal(t, expected, res)
+
+	// check that all documents that match the filter were updated
+	for _, tc := range map[string]struct {
+		filter            bson.D
+		expectedDocsCount int
+	}{
+		"MultiTrue": {
+			filter:            bson.D{{"key", "qux"}},
+			expectedDocsCount: 2,
+		},
+		"MultiFalse": {
+			filter:            bson.D{{"key", "baz"}},
+			expectedDocsCount: 0,
+		},
+		"NotUpdated": {
+			filter:            bson.D{{"key", "foo"}},
+			expectedDocsCount: 1,
+		},
+	} {
+		cursor, err = collection.Find(ctx, tc.filter)
+		require.NoError(t, err)
+
+		err = cursor.All(ctx, &docs)
+		require.NoError(t, err)
+		require.Len(t, docs, tc.expectedDocsCount)
+	}
 }
 
 func TestUpdateTimestamp(t *testing.T) {
