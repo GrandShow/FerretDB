@@ -116,4 +116,4 @@ jobs:
 
     steps:
       - name: Detect matching PR
-        uses: FerretDB/github-actions/detect-matching-pr@detect-matching-pr
+        uses: FerretDB/github-actions/detect-matching-pr@main
